@@ -35,7 +35,7 @@ local OS = detect_os()
 
 -- Your deployed Google Apps Script web app URL.
 -- See the companion vlc_media_logger.gs file for setup instructions.
-local APPS_SCRIPT_URL = ""
+local APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzZX80iE2fIQpD-xSDAEkoBULW6AJa0Cn68Ig7rSso3wh7A26a2LjJBh95zvviz_rl6gA/exec"
 
 -- Directories to EXCLUDE from logging (case-insensitive substring match).
 -- Any path containing one of these strings will be silently ignored.
