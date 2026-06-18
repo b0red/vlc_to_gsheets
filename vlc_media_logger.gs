@@ -74,9 +74,8 @@ function doGet(e) {
 
     sheet.appendRow(rowData);
 
-    // Auto-resize columns on first few rows (keep it snappy after that)
-    const lastRow = sheet.getLastRow();
-    if (lastRow <= 10) {
+    // Auto-resize columns once after the header row is written.
+    if (sheet.getLastRow() === 2) {
       sheet.autoResizeColumns(1, COLUMNS.length);
     }
 

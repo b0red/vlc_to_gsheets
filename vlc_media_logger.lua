@@ -35,7 +35,7 @@ local OS = detect_os()
 
 -- Your deployed Google Apps Script web app URL.
 -- See the companion vlc_media_logger.gs file for setup instructions.
-local APPS_SCRIPT_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID_HERE/exec"
+local APPS_SCRIPT_URL = ""
 
 -- Directories to EXCLUDE from logging (case-insensitive substring match).
 -- Any path containing one of these strings will be silently ignored.
@@ -44,19 +44,20 @@ local EXCLUDED_DIRS = {
     "/audiobooks/",
     "/podcasts/",
     "/tmp/",
-    "downloads/",
+    "/Downloads/",
 }
 
 -- TV detection: if the file path/name contains any of these strings
 -- (case-insensitive) the entry is tagged as "TV Show".
 local TV_PATH_HINTS = {
     "/tv/",
-    "TV-serier/",    
+    "TV-serier/",
     "/tv show",
     "/series/",
     "/episodes/",
     "season",
-    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+    -- Note: bare "s0"–"s9" removed — too broad (matches paths like /storage/, /s0meuser/).
+    -- SxxExx episode pattern (e.g. S01E04) is caught by the regex in detect_type().
 }
 
 -- Movie detection path hints.
@@ -135,7 +136,9 @@ function input_changed()
 end
 
 -- Called on play/pause/stop state changes — we check progress here.
-function playing_changed()
+-- VLC state integers: 3 = playing; only act while actively playing.
+function playing_changed(state)
+    if state ~= 3 then return end
     if logged_this_item then return end
 
     local input = vlc.input.item()
@@ -228,7 +231,7 @@ end
 
 -- Fires the actual logging: HTTP request + optional local file.
 function log_entry(title, uri, media_type)
-    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+    local timestamp = os.date("%Y-%m-%dT%H:%M:%S")
     vlc.msg.info("[MediaLogger] logging → " .. title .. " [" .. media_type .. "] OS=" .. OS)
 
     local url = APPS_SCRIPT_URL
@@ -241,8 +244,8 @@ function log_entry(title, uri, media_type)
     -- Works on Windows 10+ (built-in curl), Linux, and macOS.
     local cmd
     if OS == "windows" then
-        -- Windows: use start /B to background the process
-        cmd = 'start /B curl -s --max-time 10 "' .. url .. '" > nul 2>&1'
+        -- start /B alone won't redirect curl's output; wrap in cmd /c to silence it.
+        cmd = 'start /B cmd /c "curl -s --max-time 10 \\"' .. url .. '\\" > nul 2>&1"'
     else
         cmd = 'curl -s --max-time 10 "' .. url .. '" > /dev/null 2>&1 &'
     end

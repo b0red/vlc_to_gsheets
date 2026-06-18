@@ -2,17 +2,21 @@
 
 Logs watched movies and TV shows from VLC to a Google Sheet — automatically, in the background.
 
+**Current version: v1.1.0**
+
 ---
 
 ## How it works
 
 ```
 VLC plays a file
-  → Lua extension detects it (after MIN_PLAY_PERCENT %)
+  → Lua extension detects OS (Windows / macOS / Linux)
+  → Detects it (after MIN_PLAY_PERCENT %)
   → Detects type: TV Show / Movie / Unknown
   → Checks exclusion list
-  → curl POST → Google Apps Script web app
+  → curl GET  → Google Apps Script web app  (backgrounded, OS-appropriate)
   → Row appended to Google Sheet
+  → Entry written to local log file (OS-appropriate path)
 ```
 
 ---
@@ -71,6 +75,15 @@ local MIN_PLAY_PERCENT = 5
 | Windows | `%APPDATA%\vlc\lua\extensions\` |
 | macOS | `~/Library/Application Support/org.videolan.vlc/lua/extensions/` |
 
+> **Developing in WSL with Windows VLC?** VLC can't read from the WSL filesystem, so copy it to the Windows path from WSL:
+> ```bash
+> cp ~/development/vlc_logger/vlc_media_logger.lua "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"
+> ```
+> Add a shell alias to make re-deploying painless:
+> ```bash
+> alias vlc-deploy='cp ~/development/vlc_logger/vlc_media_logger.lua "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"'
+> ```
+
 3. Restart VLC.
 4. **View → VLC Media Logger** to activate.
 
@@ -117,13 +130,19 @@ The Apps Script skips logging if the same title was logged within `DEDUP_WINDOW_
 
 ## Local log file
 
-The Lua extension also writes a tab-separated log to:
-```
-~/.local/share/vlc/media_log.txt
-```
-Format: `timestamp \t type \t title \t uri`
+The Lua extension auto-selects a log path based on the detected OS:
 
-Set `LOCAL_LOG_FILE = ""` to disable.
+| OS | Path |
+|---|---|
+| Windows | `C:\temp\vlc_media_log.txt` |
+| macOS | `~/tmp/vlc_media_log.txt` |
+| Linux | `~/.local/share/vlc/media_log.txt` |
+
+The directory is created automatically if it doesn't exist. Format: `timestamp \t type \t title \t uri`
+
+Set `LOCAL_LOG_FILE = ""` to disable. You can also override the path manually by setting `LOCAL_LOG_FILE` directly in the config block instead of using the OS table.
+
+On activate, VLC's Messages log (`Tools → Messages`) will confirm which OS was detected and which log path is in use.
 
 ---
 
@@ -139,5 +158,21 @@ Set `LOCAL_LOG_FILE = ""` to disable.
 - Increase `DEDUP_WINDOW_MINUTES` in the `.gs` file and redeploy.
 
 **Windows users**
-- `os.execute("curl ...")` requires curl to be in PATH (built-in on Windows 10+).
-- Use forward slashes or URL-encoded paths; the Lua extension handles encoding.
+- curl is built into Windows 10+, no install needed.
+- The script uses `start /B curl ...` to background the request (vs `&` on Unix) — this is handled automatically.
+- If developing in WSL, always copy to the Windows extensions path — VLC cannot read from the WSL filesystem.
+
+---
+
+## Changelog
+
+**v1.1.0**
+- Added OS detection (Windows / macOS / Linux) via `package.config` separator + macOS plist check
+- Local log file path now auto-selected per OS; log directory created automatically if missing
+- Windows curl backgrounded with `start /B` instead of `&`
+- URL-decoding in title derivation now handles all `%XX` sequences generically
+- Type detection now checks both path and title string
+- OS and log path confirmed in VLC Messages log on activate
+
+**v1.0.0**
+- Initial release
