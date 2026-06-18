@@ -1,4 +1,1 @@
-## switch for file in .lua
-#https://script.google.com/.../exec?title=Test&type=Movie&uri=test&timestamp=2026-01-01
-#ocal APPS_SCRIPT_URL = "https://script.google.com/macros/s/YOUR_ID/exec"
-#https://script.google.com/macros/s/AKfycbzZX80iE2fIQpD-xSDAEkoBULW6AJa0Cn68Ig7rSso3wh7A26a2LjJBh95zvviz_rl6gA/exec?title=Test&type=Movie&uri=test&timestamp=2026-01-01
+.env
