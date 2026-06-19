@@ -1,5 +1,5 @@
 -- =============================================================================
--- vlc_media_logger.lua  v1.1.0
+-- vlc_media_logger.lua  v1.2.0
 -- Logs watched movies and TV shows to Google Sheets via a Google Apps Script
 -- webhook. Detects media type (TV / Movie / Unknown), supports directory
 -- exclusions, and auto-detects OS for the local log file path.
@@ -33,9 +33,25 @@ local OS = detect_os()
 
 -- ─── USER CONFIGURATION ───────────────────────────────────────────────────────
 
--- Your deployed Google Apps Script web app URL.
--- See the companion vlc_media_logger.gs file for setup instructions.
-local APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzZX80iE2fIQpD-xSDAEkoBULW6AJa0Cn68Ig7rSso3wh7A26a2LjJBh95zvviz_rl6gA/exec"
+-- Deployment URL is loaded from vlc_media_logger.cfg (next to this file).
+-- See vlc_media_logger.cfg.example for the expected format.
+-- Never hardcode the URL here — the .cfg file is gitignored.
+local function load_config()
+    local src = debug.getinfo(1, "S").source:sub(2)
+    local dir = src:match("^(.*[/\\])") or ""
+    local f = io.open(dir .. "vlc_media_logger.cfg", "r")
+    if not f then return {} end
+    local cfg = {}
+    for line in f:lines() do
+        local k, v = line:match("^([%w_]+)%s*=%s*(.+)$")
+        if k then cfg[k] = v end
+    end
+    f:close()
+    return cfg
+end
+
+local _cfg = load_config()
+local APPS_SCRIPT_URL = _cfg.APPS_SCRIPT_URL or ""
 
 -- Directories to EXCLUDE from logging (case-insensitive substring match).
 -- Any path containing one of these strings will be silently ignored.
@@ -44,14 +60,15 @@ local EXCLUDED_DIRS = {
     "/audiobooks/",
     "/podcasts/",
     "/tmp/",
-    "/Downloads/",
 }
 
 -- TV detection: if the file path/name contains any of these strings
 -- (case-insensitive) the entry is tagged as "TV Show".
 local TV_PATH_HINTS = {
+    "/Downloads",
     "/tv/",
-    "TV-serier/",
+    "/Serier - Kanske/",
+    "/TV-serier/",
     "/tv show",
     "/series/",
     "/episodes/",
@@ -62,8 +79,9 @@ local TV_PATH_HINTS = {
 
 -- Movie detection path hints.
 local MOVIE_PATH_HINTS = {
+    "/Downloads",
     "/movies/",
-    "Movies/", 
+    "/Movies/", 
     "/movie/",
     "/films/",
     "/film/",
@@ -72,7 +90,7 @@ local MOVIE_PATH_HINTS = {
 
 -- Minimum playback percentage (0–100) before an entry is logged.
 -- Avoids logging accidental one-second opens. Set to 0 to log immediately.
-local MIN_PLAY_PERCENT = 30
+local MIN_PLAY_PERCENT = 5
 
 -- Local log file path — auto-selected by OS.
 -- Set to "" to disable local logging entirely.
@@ -86,13 +104,14 @@ local LOCAL_LOG_FILE = ({
 
 local logged_this_item = false
 local current_uri      = ""
+local poll_timer       = nil
 
 -- ─── DESCRIPTOR ───────────────────────────────────────────────────────────────
 
 function descriptor()
     return {
         title        = "VLC Media Logger",
-        version      = "1.1.0",
+        version      = "1.2.0",
         author       = "b0red / Claude",
         url          = "",
         description  = "Logs watched movies and TV shows to Google Sheets.",
@@ -106,9 +125,12 @@ function activate()
     vlc.msg.info("[MediaLogger] activated — OS detected: " .. OS)
     vlc.msg.info("[MediaLogger] log file: " .. (LOCAL_LOG_FILE ~= "" and LOCAL_LOG_FILE or "disabled"))
     ensure_log_dir()
+    local ok, t = pcall(vlc.timer, poll_position)
+    if ok then poll_timer = t end
 end
 
 function deactivate()
+    if poll_timer then poll_timer:cancel() end
     vlc.msg.info("[MediaLogger] deactivated")
 end
 
@@ -125,6 +147,7 @@ function input_changed()
     if input == nil then
         logged_this_item = false
         current_uri      = ""
+        if poll_timer then poll_timer:cancel() end
         return
     end
 
@@ -132,33 +155,51 @@ function input_changed()
     if uri ~= current_uri then
         logged_this_item = false
         current_uri      = uri
+        if poll_timer then poll_timer:cancel() end
     end
 end
 
--- Called on play/pause/stop state changes — we check progress here.
--- VLC state integers: 3 = playing; only act while actively playing.
+-- Called on play/pause/stop state changes.
+-- VLC state integers: 3 = playing.
+-- NOTE: this fires only on transitions — not on every tick — so we cannot
+-- rely on position being >= MIN_PLAY_PERCENT at the moment it first fires
+-- (position is ~0 at playback start). A timer polls position after a delay.
 function playing_changed(state)
     if state ~= 3 then return end
     if logged_this_item then return end
+    if poll_timer then
+        poll_timer:cancel()
+        poll_timer:schedule(3000000)  -- check position in 3 s
+    else
+        try_log()  -- fallback if timer API unavailable
+    end
+end
 
+-- Timer callback: check whether MIN_PLAY_PERCENT has been reached yet.
+function poll_position()
+    if logged_this_item or current_uri == "" then return end
+    if not try_log() and poll_timer then
+        poll_timer:schedule(10000000)  -- not there yet — retry in 10 s
+    end
+end
+
+-- Shared logging attempt. Returns true if the item was logged (or skipped
+-- intentionally), false if we should try again later.
+function try_log()
+    if logged_this_item then return true end
     local input = vlc.input.item()
-    if input == nil then return end
-
-    if get_play_position() < MIN_PLAY_PERCENT then return end
-
+    if input == nil then return false end
+    if get_play_position() < MIN_PLAY_PERCENT then return false end
     local uri   = input:uri() or ""
     local title = derive_title(input, uri)
-
-    if not title or title == "" then return end
-
+    if not title or title == "" then return false end
     if is_excluded(uri) then
         vlc.msg.info("[MediaLogger] skipping excluded path: " .. uri)
-        return
+        return true
     end
-
-    local media_type = detect_type(uri, title)
-    log_entry(title, uri, media_type)
+    log_entry(title, uri, detect_type(uri, title))
     logged_this_item = true
+    return true
 end
 
 -- ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -240,12 +281,12 @@ function log_entry(title, uri, media_type)
         .. "&uri="       .. url_encode(uri)
         .. "&timestamp=" .. url_encode(timestamp)
 
-    -- Fire curl in the background so VLC never blocks.
-    -- Works on Windows 10+ (built-in curl), Linux, and macOS.
     local cmd
     if OS == "windows" then
-        -- start /B alone won't redirect curl's output; wrap in cmd /c to silence it.
-        cmd = 'start /B cmd /c "curl -s --max-time 10 \\"' .. url .. '\\" > nul 2>&1"'
+        -- Run curl.exe directly. Double-quoting the URL protects & in query params
+        -- from cmd.exe interpretation. This call blocks briefly (~1 s) but is
+        -- the only approach that works reliably without a helper script.
+        cmd = 'curl.exe -s --max-time 10 "' .. url .. '" > nul 2>&1'
     else
         cmd = 'curl -s --max-time 10 "' .. url .. '" > /dev/null 2>&1 &'
     end

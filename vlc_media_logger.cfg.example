@@ -1,0 +1,6 @@
+# Copy this file to vlc_media_logger.cfg and fill in your values.
+# vlc_media_logger.cfg is gitignored — never commit the real URL.
+
+# Your Google Apps Script web app deployment URL.
+# Deploy → New deployment → Web app → Execute as: Me → Anyone
+APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec

@@ -2,7 +2,7 @@
 
 Logs watched movies and TV shows from VLC to a Google Sheet — automatically, in the background.
 
-**Current version: v1.1.0**
+**Current version: v1.2.0**
 
 ---
 
@@ -27,6 +27,8 @@ VLC plays a file
 |---|---|
 | `vlc_media_logger.lua` | VLC Lua extension (runs inside VLC) |
 | `vlc_media_logger.gs` | Google Apps Script (runs in Google Sheets) |
+| `vlc_media_logger.cfg.example` | Config template — copy to `vlc_media_logger.cfg` and fill in your URL |
+| `vlc_media_logger.cfg` | Your local config with real URL — **gitignored, never committed** |
 
 ---
 
@@ -50,24 +52,15 @@ VLC plays a file
 
 ## Setup — VLC side
 
-1. Open `vlc_media_logger.lua` and edit the **USER CONFIGURATION** block at the top:
+1. Copy `vlc_media_logger.cfg.example` to `vlc_media_logger.cfg` (in the same folder) and paste your deployment URL:
 
-```lua
--- Paste your deployment URL here
-local APPS_SCRIPT_URL = "https://script.google.com/macros/s/YOUR_ID/exec"
-
--- Directories to never log (case-insensitive substring match against full path)
-local EXCLUDED_DIRS = {
-    "/music/",
-    "/audiobooks/",
-    "/tmp/",
-}
-
--- Minimum % of the file that must have played before logging
-local MIN_PLAY_PERCENT = 5
+```ini
+APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
 ```
 
-2. Copy the file to your VLC extensions folder:
+2. Optionally edit the **USER CONFIGURATION** block at the top of `vlc_media_logger.lua` to tune exclusion paths, path hints, or `MIN_PLAY_PERCENT`.
+
+3. Copy **both** `vlc_media_logger.lua` and `vlc_media_logger.cfg` to your VLC extensions folder:
 
 | OS | Path |
 |---|---|
@@ -75,13 +68,14 @@ local MIN_PLAY_PERCENT = 5
 | Windows | `%APPDATA%\vlc\lua\extensions\` |
 | macOS | `~/Library/Application Support/org.videolan.vlc/lua/extensions/` |
 
-> **Developing in WSL with Windows VLC?** VLC can't read from the WSL filesystem, so copy it to the Windows path from WSL:
+> **Developing in WSL with Windows VLC?** VLC can't read from the WSL filesystem, so copy both files to the Windows path from WSL:
 > ```bash
 > cp ~/development/vlc_logger/vlc_media_logger.lua "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"
+> cp ~/development/vlc_logger/vlc_media_logger.cfg "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"
 > ```
 > Add a shell alias to make re-deploying painless:
 > ```bash
-> alias vlc-deploy='cp ~/development/vlc_logger/vlc_media_logger.lua "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"'
+> alias vlc-deploy='cp ~/development/vlc_logger/vlc_media_logger.{lua,cfg} "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"'
 > ```
 
 3. Restart VLC.
@@ -159,12 +153,17 @@ On activate, VLC's Messages log (`Tools → Messages`) will confirm which OS was
 
 **Windows users**
 - curl is built into Windows 10+, no install needed.
-- The script uses `start /B curl ...` to background the request (vs `&` on Unix) — this is handled automatically.
-- If developing in WSL, always copy to the Windows extensions path — VLC cannot read from the WSL filesystem.
+- The script calls `curl.exe` directly on Windows; this is handled automatically.
+- If developing in WSL, always copy both `.lua` and `.cfg` to the Windows extensions path — VLC cannot read from the WSL filesystem.
 
 ---
 
 ## Changelog
+
+**v1.2.0**
+- Deployment URL moved out of the script into `vlc_media_logger.cfg` (gitignored) — no secrets in version control
+- Fixed: `MIN_PLAY_PERCENT` check now works correctly using a poll timer; previously `playing_changed` only fired at position ~0% (playback start) and never again during uninterrupted viewing
+- Fixed: Windows curl command now calls `curl.exe` directly, resolving broken quoting and `&` misinterpretation in the old `cmd /c` wrapper
 
 **v1.1.0**
 - Added OS detection (Windows / macOS / Linux) via `package.config` separator + macOS plist check
