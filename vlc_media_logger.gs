@@ -25,9 +25,10 @@
 const SHEET_NAME = "Watch Log";
 
 // Column order written to the sheet.
-// Allowed keys: timestamp, title, type, uri
+// Allowed keys: timestamp, title, type
 // Remove or reorder freely — the header row will match.
-const COLUMNS = ["timestamp", "title", "type", "uri"];
+// (URI is kept in the local log file but intentionally excluded from Sheets.)
+const COLUMNS = ["timestamp", "title", "type"];
 
 // Optional: duplicate guard window in minutes.
 // If the same title was logged within this many minutes, skip it.
@@ -118,9 +119,11 @@ function writeHeader(sheet) {
 }
 
 /**
- * Run this manually once via Apps Script editor to create the sheet + header.
+ * Run this manually once via Apps Script editor to create the sheet + header
+ * and rename the spreadsheet document to "VLC Media Log".
  */
 function setupSheet() {
+  SpreadsheetApp.getActiveSpreadsheet().rename("VLC Media Log");
   const sheet = getOrCreateSheet();
   SpreadsheetApp.getUi().alert("Sheet '" + SHEET_NAME + "' is ready.");
 }

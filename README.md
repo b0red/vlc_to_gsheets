@@ -2,7 +2,7 @@
 
 Logs watched movies and TV shows from VLC to a Google Sheet — automatically, in the background.
 
-**Current version: v1.2.0**
+**Current version: v1.4.0** — Windows only
 
 ---
 
@@ -10,13 +10,13 @@ Logs watched movies and TV shows from VLC to a Google Sheet — automatically, i
 
 ```
 VLC plays a file
-  → Lua extension detects OS (Windows / macOS / Linux)
-  → Detects it (after MIN_PLAY_PERCENT %)
+  → Lua extension fires on meta_changed / playing_changed
+  → Derives title from metadata (or filename fallback)
+  → Strips quality/codec junk (720p, BluRay, x264, …)
   → Detects type: TV Show / Movie / Unknown
-  → Checks exclusion list
-  → curl GET  → Google Apps Script web app  (backgrounded, OS-appropriate)
-  → Row appended to Google Sheet
-  → Entry written to local log file (OS-appropriate path)
+  → Appends a row to C:\temp\vlc_media_log.txt
+  → curl GET → Google Apps Script web app
+  → Row appended to Google Sheet (timestamp, title, type)
 ```
 
 ---
@@ -38,7 +38,7 @@ VLC plays a file
 2. Go to **Extensions → Apps Script**.
 3. Paste the full contents of `vlc_media_logger.gs`, replacing anything there.
 4. Click **▶ Run → `setupSheet`** once. Accept permissions when prompted.
-   This creates the *Watch Log* tab with a formatted header row.
+   This creates the *Watch Log* tab with a formatted header row and renames the spreadsheet to *VLC Media Log*.
 5. Deploy as a web app:
    - **Deploy → New deployment**
    - Type: **Web app**
@@ -50,30 +50,25 @@ VLC plays a file
 
 ---
 
-## Setup — VLC side
+## Setup — VLC side (Windows)
 
-1. Copy `vlc_media_logger.cfg.example` to `vlc_media_logger.cfg` (in the same folder) and paste your deployment URL:
+1. Copy `vlc_media_logger.cfg.example` to `vlc_media_logger.cfg` in the same folder and paste your deployment URL:
 
 ```ini
 APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
 ```
 
-2. Optionally edit the **USER CONFIGURATION** block at the top of `vlc_media_logger.lua` to tune exclusion paths, path hints, or `MIN_PLAY_PERCENT`.
+2. Copy **both** `vlc_media_logger.lua` and `vlc_media_logger.cfg` to your VLC extensions folder:
 
-3. Copy **both** `vlc_media_logger.lua` and `vlc_media_logger.cfg` to your VLC extensions folder:
+```
+%APPDATA%\vlc\lua\extensions\
+```
 
-| OS | Path |
-|---|---|
-| Linux / WSL | `~/.local/share/vlc/lua/extensions/` |
-| Windows | `%APPDATA%\vlc\lua\extensions\` |
-| macOS | `~/Library/Application Support/org.videolan.vlc/lua/extensions/` |
-
-> **Developing in WSL with Windows VLC?** VLC can't read from the WSL filesystem, so copy both files to the Windows path from WSL:
+> **Developing in WSL?** VLC cannot read from the WSL filesystem, so copy both files to the Windows path from WSL:
 > ```bash
-> cp ~/development/vlc_logger/vlc_media_logger.lua "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"
-> cp ~/development/vlc_logger/vlc_media_logger.cfg "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"
+> cp ~/development/vlc_logger/vlc_media_logger.{lua,cfg} "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"
 > ```
-> Add a shell alias to make re-deploying painless:
+> A shell alias makes re-deploying painless:
 > ```bash
 > alias vlc-deploy='cp ~/development/vlc_logger/vlc_media_logger.{lua,cfg} "/mnt/c/Users/YOUR_NAME/AppData/Roaming/vlc/lua/extensions/"'
 > ```
@@ -81,26 +76,30 @@ APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
 3. Restart VLC.
 4. **View → VLC Media Logger** to activate.
 
+The extension creates `C:\temp\` automatically if it doesn't exist.
+
+---
+
+## Title cleanup
+
+Titles are derived from VLC's metadata. When the metadata title looks like a raw filename (e.g. `The.Show.S01E03.720p.WEB.x264-GROUP`), the extension:
+
+1. Replaces dots and underscores with spaces.
+2. Finds the first quality/codec marker (`720p`, `1080p`, `BluRay`, `WEBRip`, `x264`, `x265`, `HEVC`, `HDTV`, `DVDRip`, …) and strips it and everything after.
+
+Result: `The Show S01E03`
+
 ---
 
 ## Media type detection
 
 | Type | How it's detected |
 |---|---|
-| **TV Show** | Path contains `/tv/`, `/series/`, `season`, or matches `S01E02` pattern |
-| **Movie** | Path contains `/movies/`, `/films/`, or filename has a `(YYYY)` year |
+| **TV Show** | URI matches `S01E02` pattern, or path contains `/tv/`, `/serier`, `/series/`, `/episodes/`, `season` |
+| **Movie** | Filename contains a `(YYYY)` year, or path contains `/movies/`, `/films/`, `/film/`, `/cinema/` |
 | **Unknown** | Neither of the above matched |
 
-You can add your own path hints in the `TV_PATH_HINTS` / `MOVIE_PATH_HINTS` arrays inside the Lua file.  
-Example — your setup has `/media/TV/tv1` (active) and `/media/TV/tv2` (archive):
-
-```lua
-local TV_PATH_HINTS = {
-    "/media/tv/",   -- catches both tv1 and tv2
-    "season",
-    "s0", "s1", ...
-}
-```
+To add your own path hints, edit the `TV_HINTS` / `MOVIE_HINTS` tables at the top of `vlc_media_logger.lua`.
 
 ---
 
@@ -109,10 +108,10 @@ local TV_PATH_HINTS = {
 Configured in `vlc_media_logger.gs` via the `COLUMNS` array:
 
 ```js
-const COLUMNS = ["timestamp", "title", "type", "uri"];
+const COLUMNS = ["timestamp", "title", "type"];
 ```
 
-Reorder or remove columns freely — the header row is auto-generated to match.
+Reorder or remove columns freely — the header row is auto-generated to match. URI is intentionally excluded from the sheet (it stays in the local log file).
 
 ---
 
@@ -124,54 +123,58 @@ The Apps Script skips logging if the same title was logged within `DEDUP_WINDOW_
 
 ## Local log file
 
-The Lua extension auto-selects a log path based on the detected OS:
+All activity is written to `C:\temp\vlc_media_log.txt`.
 
-| OS | Path |
-|---|---|
-| Windows | `C:\temp\vlc_media_log.txt` |
-| macOS | `~/tmp/vlc_media_log.txt` |
-| Linux | `~/.local/share/vlc/media_log.txt` |
+Format: `timestamp TAB type TAB title TAB uri`
 
-The directory is created automatically if it doesn't exist. Format: `timestamp \t type \t title \t uri`
+Example:
+```
+2026-06-20T22:29:50	TV Show	the scream murder a true teen horror story s01e03	file:///X:/Serier%20-%20Kanske/...
+```
 
-Set `LOCAL_LOG_FILE = ""` to disable. You can also override the path manually by setting `LOCAL_LOG_FILE` directly in the config block instead of using the OS table.
-
-On activate, VLC's Messages log (`Tools → Messages`) will confirm which OS was detected and which log path is in use.
+Activation and deactivation events are also written with `[INFO]` markers.
 
 ---
 
 ## Troubleshooting
 
 **Nothing appears in the sheet**
-- Check VLC's Messages log (Tools → Messages) for `[MediaLogger]` lines.
-- Make sure `MIN_PLAY_PERCENT` threshold has been passed.
+- Check VLC's Messages log (**Tools → Messages**) for `[MediaLogger]` lines.
 - Test the URL directly in a browser: `https://script.google.com/.../exec?title=Test&type=Movie&uri=test&timestamp=2026-01-01`
 - Confirm the Apps Script deployment is set to **Anyone** access.
+- Check `C:\temp\vlc_media_log.txt` — if the title row is there but the sheet is empty, curl is the problem. Run the URL from a terminal: `curl.exe "https://script.google.com/.../exec?title=Test&type=Movie&timestamp=2026-01-01"`
 
 **Duplicate rows**
 - Increase `DEDUP_WINDOW_MINUTES` in the `.gs` file and redeploy.
 
-**Windows users**
-- curl is built into Windows 10+, no install needed.
-- The script calls `curl.exe` directly on Windows; this is handled automatically.
-- If developing in WSL, always copy both `.lua` and `.cfg` to the Windows extensions path — VLC cannot read from the WSL filesystem.
+**Extension doesn't appear in View menu**
+- Make sure neither `vlc_media_logger.lua` nor `vlc_media_logger.cfg` calls `io.open` or `os.getenv` at module level — VLC's Lua sandbox silently drops extensions that do this.
+- Confirm the file is in `%APPDATA%\vlc\lua\extensions\` (not a subdirectory).
 
 ---
 
 ## Changelog
 
+**v1.4.0**
+- Added `clean_title()`: strips quality/codec markers from filename-derived titles (720p, BluRay, WEBRip, x264, HEVC, …)
+- Added `detect_type()`: classifies media as TV Show, Movie, or Unknown from path hints and SxxExx pattern
+- `type` is now sent to Google Sheets; `uri` removed from sheet columns (kept in local log only)
+- Removed verbose debug logging from the local log file
+
+**v1.3.x**
+- Simplified to Windows-only; removed OS detection and per-OS path selection
+- Config (`APPS_SCRIPT_URL`) loaded inside `activate()` to satisfy VLC's Lua sandbox restrictions
+- Added detailed debug logging to `C:\temp\vlc_media_log.txt` to confirm curl and Sheets connectivity
+- `meta_changed` callback added alongside `playing_changed` for more reliable title capture
+
 **v1.2.0**
 - Deployment URL moved out of the script into `vlc_media_logger.cfg` (gitignored) — no secrets in version control
-- Fixed: `MIN_PLAY_PERCENT` check now works correctly using a poll timer; previously `playing_changed` only fired at position ~0% (playback start) and never again during uninterrupted viewing
-- Fixed: Windows curl command now calls `curl.exe` directly, resolving broken quoting and `&` misinterpretation in the old `cmd /c` wrapper
+- Fixed: Windows curl now calls `curl.exe` directly, resolving `&` misinterpretation in the old `cmd /c` wrapper
 
 **v1.1.0**
-- Added OS detection (Windows / macOS / Linux) via `package.config` separator + macOS plist check
-- Local log file path now auto-selected per OS; log directory created automatically if missing
-- Windows curl backgrounded with `start /B` instead of `&`
-- URL-decoding in title derivation now handles all `%XX` sequences generically
-- Type detection now checks both path and title string
-- OS and log path confirmed in VLC Messages log on activate
+- Added OS detection (Windows / macOS / Linux)
+- Local log file path auto-selected per OS; log directory created automatically if missing
+- URL-decoding in title derivation handles all `%XX` sequences
 
 **v1.0.0**
 - Initial release
