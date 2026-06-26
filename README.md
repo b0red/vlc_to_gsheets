@@ -2,7 +2,7 @@
 
 Logs watched movies and TV shows from VLC to a Google Sheet — automatically, in the background.
 
-**Current version: v1.4.0** — Windows only
+**Current version: v1.5.0** — Windows only
 
 ---
 
@@ -14,10 +14,14 @@ VLC plays a file
   → Derives title from metadata (or filename fallback)
   → Strips quality/codec junk (720p, BluRay, x264, …)
   → Detects type: TV Show / Movie / Unknown
+  → Waits until 15 minutes of playback have elapsed
   → Appends a row to C:\temp\vlc_media_log.txt
   → curl GET → Google Apps Script web app
   → Row appended to Google Sheet (timestamp, title, type)
+  → Finds .nfo sidecar file → increments <playcount>, sets <watched>true</watched>
 ```
+
+> **Note on console flashes:** When the extension calls `curl.exe` to send to Google Sheets (or scans a folder for `.nfo` files), a brief black CMD window may flash on screen. This is normal Windows behaviour for background shell commands — it lasts less than a second.
 
 ---
 
@@ -103,6 +107,34 @@ To add your own path hints, edit the `TV_HINTS` / `MOVIE_HINTS` tables at the to
 
 ---
 
+## 15-minute watch threshold
+
+The extension only logs a title after **15 continuous minutes of playback** have elapsed. This prevents quick previews and accidental opens from showing up in your watch history.
+
+The timer starts when VLC begins playing and is checked at the next state change (pause, stop, or end of file). For movies watched straight through, the check happens when the file ends and VLC changes state.
+
+---
+
+## NFO file updates
+
+If a Kodi-compatible `.nfo` sidecar exists alongside the media file, the extension updates it when the 15-minute threshold triggers:
+
+- **`<playcount>`** — incremented by 1 (e.g. `<playcount>2</playcount>` → `<playcount>3</playcount>`)
+- **`<watched>`** — changed from `false` to `true` if needed; left untouched if already `true`
+
+NFO lookup order (first match wins):
+
+| Priority | Pattern |
+|---|---|
+| 1 | Same filename with `.nfo` extension — `Movie.Title.2021.nfo` |
+| 2 | Folder name as NFO — `Movie Title (2021)/Movie Title (2021).nfo` |
+| 3 | Generic `movie.nfo` in the same folder |
+| 4 | Any `*.nfo` found in the same folder (directory scan) |
+
+If no `.nfo` file is found, or the file doesn't contain `<playcount>`/`<watched>` tags, nothing is changed. A note is written to `C:\temp\vlc_media_log.txt` and VLC's Messages log either way.
+
+---
+
 ## Google Sheet columns
 
 Configured in `vlc_media_logger.gs` via the `COLUMNS` array:
@@ -154,6 +186,12 @@ Activation and deactivation events are also written with `[INFO]` markers.
 ---
 
 ## Changelog
+
+**v1.5.0**
+- Added 15-minute watch threshold: titles are only logged after 15 minutes of playback have elapsed, preventing quick previews from appearing in your history
+- Added NFO sidecar update: when a Kodi-style `.nfo` file is found next to the media file, `<playcount>` is incremented and `<watched>` is set to `true`
+- NFO lookup tries same-name, folder-name, `movie.nfo`, then a directory scan in that order
+- Added note to README about brief CMD/console window flashes (normal Windows behaviour for background shell calls)
 
 **v1.4.0**
 - Added `clean_title()`: strips quality/codec markers from filename-derived titles (720p, BluRay, WEBRip, x264, HEVC, …)
